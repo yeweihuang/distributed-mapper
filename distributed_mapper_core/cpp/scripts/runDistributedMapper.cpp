@@ -108,9 +108,9 @@ int main(int argc, char* argv[])
   //Command line arguments
   //////////////////////////////////////////////////////////////////////////////////////
   size_t nrRobots = 2; // number of robots
-  string logDir("/tmp/"); // log directory
-  string dataDir("/tmp/"); // data directory
-  string traceFile("/tmp/runG2o"); // data directory
+  string logDir("/home/yewei/robust_distributed_mapper/tmp/"); // log directory
+  string dataDir("/home/yewei/distributed-mapper-master/distributed_mapper_core/data/example_2robots/"); // data directory
+  string traceFile("/home/yewei/robust_distributed_mapper/runG2o"); // data directory
   bool useXY = false;
   bool useOP = false;
   bool debug = false;
@@ -203,12 +203,14 @@ int main(int argc, char* argv[])
   vector< boost::shared_ptr<DistributedMapper> > distMappers;
 
   // Load subgraph and construct distMapper optimizers
+  //initial the distmapper, no optimizing thing happens yet
   for(size_t robot = 0; robot < nrRobots; robot++){
 
       // Construct a distributed jacobi object with the given robot name
       boost::shared_ptr<DistributedMapper> distMapper(new DistributedMapper(robotNames_[robot], useChrLessFullGraph));
 
       // Read G2o files
+      //TODO: modify to read mh-isam2 version of files
       string dataFile_i = dataDir + boost::lexical_cast<string>(robot) + ".g2o";
       GraphAndValues graphAndValuesG2o = readG2o(dataFile_i, true);
       Values initial = *(graphAndValuesG2o.second);
@@ -230,11 +232,13 @@ int main(int argc, char* argv[])
       distMapper->setUseLandmarksFlag(useLandmarks);
 
       // Load subgraphs
+      //initialize the local graph (both rotation & full) & initialize the separator pose list & graph
       distMapper->loadSubgraphAndCreateSubgraphEdge(graphAndValues);
 
       // Add prior to the first robot
       if(robot==0){
           Key firstKey = KeyVector(initial.keys()).at(0);
+          //update initial value to all the graph involved(graph_, innerEdges_, chordalGraph_)
           distMapper->addPrior(firstKey, initial.at<Pose3>(firstKey), priorModel);
         }
 

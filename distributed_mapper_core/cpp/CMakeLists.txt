@@ -1,7 +1,11 @@
-cmake_minimum_required(VERSION 2.8 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.10)
 project(distributed-mapper)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fPIC")
+#set(CMAKE_CXX_STANDARD 17)
+
+# Add option to enable testing
+option(ENABLE_TESTS "Enable tests" ON)
 
 ###########################################################################
 # Find GTSAM
@@ -10,10 +14,16 @@ include_directories(${GTSAM_INCLUDE_DIR})
 link_directories(${GTSAM_LIBRARY_DIRS})
 message("GTSAM Libraries: ${GTSAM_LIBRARIES}")
 
-# for unittest scripts
-set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" "${GTSAM_DIR}/../GTSAMCMakeTools")
-include(GtsamBuildTypes)
-include(GtsamTesting)
+# for unittest examples
+#set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" "${GTSAM_DIR}/../GTSAMCMakeTools")
+#include(GtsamTesting)
+
+include_directories(src)
+
+#add DCSAM
+include_directories(/home/yewei/dcsam/dcsam/include)
+add_library(DCSAM STATIC IMPORTED)
+set_property(TARGET DCSAM PROPERTY IMPORTED_LOCATION /home/yewei/dcsam/dcsam/build/libdcsam.a)
 
 ###########################################################################
 # Find Boost
@@ -24,31 +34,39 @@ message("Boost Libraries: ${Boost_LIBRARIES}")
 
 ###########################################################################
 # Distributed Mapper
-file(GLOB srcs "src/*.cpp" "src/*.h")
-include_directories(src)
-add_library (distributed-mapper SHARED ${srcs} ${GTSAM_LIBRARIES})
-add_library (distributed-mapper-static STATIC ${srcs} ${GTSAM_LIBRARIES})
-target_link_libraries(distributed-mapper ${Boost_LIBRARIES} gtsam)
-target_link_libraries(distributed-mapper-static ${Boost_LIBRARIES} gtsam)
-export(PACKAGE DistributedMapper)
-install(TARGETS distributed-mapper DESTINATION lib)
-install(TARGETS distributed-mapper-static DESTINATION lib)
+add_library (distributed_mapper
+        src/DistributedMapper.cpp
+        src/MultiRobotUtils.cpp
+        )
+
+target_link_libraries(distributed_mapper
+        ${Boost_LIBRARIES}
+        gtsam
+        DCSAM)
 
 ###########################################################################
-# Add executable
-add_executable (runDistributedMapper  scripts/runDistributedMapper.cpp)
-target_link_libraries (runDistributedMapper distributed-mapper ${Boost_LIBRARIES} gtsam)
-install(TARGETS runDistributedMapper DESTINATION bin)
+# Add example executable
+add_executable (runDistributedMapper scripts/runDistributedMapper.cpp)
+target_link_libraries (runDistributedMapper distributed_mapper)
 
 ###########################################################################
 # Tests
-add_subdirectory(tests)
+#add_subdirectory(tests)
+
+# Include unit tests directory to the project.
+if (${ENABLE_TESTS})
+    message(STATUS "Testing enabled. Building tests.")
+    find_package(GTSAMCMakeTools)
+    include(GtsamTesting)
+    add_subdirectory(tests)
+endif()
+
 
 ###########################################################################
 # Install
-file(GLOB headers "src/*.h")
-install(FILES ${headers} DESTINATION include/distributed_mapper/)
-configure_file (${PROJECT_SOURCE_DIR}/DistributedMapperConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/DistributedMapperConfig.cmake @ONLY)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/DistributedMapperConfig.cmake DESTINATION share/distributed_mapper)
+#file(GLOB headers "src/*.h")
+#install(FILES ${headers} DESTINATION include/distributed_mapper/)
+#configure_file (${PROJECT_SOURCE_DIR}/DistributedMapperConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/DistributedMapperConfig.cmake @ONLY)
+#install(FILES ${CMAKE_CURRENT_BINARY_DIR}/DistributedMapperConfig.cmake DESTINATION share/distributed_mapper)
 
 

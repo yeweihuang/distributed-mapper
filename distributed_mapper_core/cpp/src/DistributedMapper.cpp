@@ -1,8 +1,10 @@
 #include <DistributedMapper.h>
+#include <dcsam/DCMixtureFactor.h>
 
 
 using namespace std;
 using namespace gtsam;
+using namespace dcsam;
 
 namespace distributed_mapper{
 //*****************************************************************************
@@ -11,7 +13,7 @@ DistributedMapper::createSubgraphInnerAndSepEdges(const NonlinearFactorGraph& su
 
   // we create the NFG including only the inner edges
   NonlinearFactorGraph subgraphInnerEdge;
-  vector<size_t> subgraphsSepEdgesId;
+  vector<size_t> subgraphsSepEdgesId;//store all separator poses
   neighbors_.clear();
 
   for(size_t k=0; k < subgraph.size(); k++){ // this loops over the factors in subgraphs[i]
@@ -71,7 +73,7 @@ DistributedMapper::loadSubgraphAndCreateSubgraphEdge(GraphAndValues graphAndValu
   graph_ = *(graphAndValues.first);
   initial_ = *(graphAndValues.second);
 
-  // Convert initial values into row major vector values
+  // Convert initial values from 3 * 3 matrix into row major 1 * 9 vector values
   linearizedRotation_ = multirobot_util::rowMajorVectorValues(initial_);
 
   // create a nonlinear factor graph with inner edges and store slots of separators
@@ -90,18 +92,28 @@ DistributedMapper::createLinearOrientationGraph(){
   // Preallocate
   NonlinearFactorGraph pose3Graph = InitializePose3::buildPose3graph(innerEdges_);
   rotSubgraph_ = multirobot_util::buildLinearOrientationGraph(pose3Graph, useBetweenNoise_);
+//  rotSubgraph_.print();
+
+  std::pair <gtsam::NonlinearFactorGraph, gtsam::Values > gf = multirobot_util::buildNonLinearOrientationGraph(pose3Graph, initial_, useBetweenNoise_);
+  nonlinearRotSubgraph_ = gf.first;
+  rotValues_ = gf.second;
+//  cout<<"rotValues:"<<endl;
+//  rotValues_.print();
+//  nonlinearRotSubgraph_.print();
 }
 
 
 //*****************************************************************************
 void
-DistributedMapper::estimateRotation(){
+DistributedMapper::estimateRotationNonlinear(){
   // Rotation vector estimated using Chordal relaxation
 
-  // Inner edges for the current subgraph
-  gtsam::GaussianFactorGraph rotSubgraph = rotSubgraph_.clone();
+  // Inner edges for the current subgraph, rotation of separator poses would be added later
 
-  // push back to rotgraph_i separator edges as priors
+  gtsam::NonlinearFactorGraph nonlinearRotSubgraph = nonlinearRotSubgraph_.clone();
+  gtsam::Values rotValues = rotValues_;
+
+  // push back to rotgraph_i (rotSubgraph) separator edges as priors
   for(size_t s = 0 ; s < separatorEdgeIds_.size(); s++){ // for each separator
     // | rj - Mij * ri | = | Mij * ri - rj |, with Mij = diag(Rij',Rij',Rij')
     // |Ab - b| -> Jacobian(key,A,b)
@@ -111,11 +123,8 @@ DistributedMapper::estimateRotation(){
         boost::dynamic_pointer_cast<BetweenFactor<Pose3> >(graph_.at(sepSlot));
 
     Pose3 relativePose = pose3Between->measured();
-    Matrix3 R01t = relativePose.rotation().transpose().matrix();
-    Matrix M9 = Z_9x9;
-    M9.block(0,0,3,3) = R01t;
-    M9.block(3,3,3,3) = R01t;
-    M9.block(6,6,3,3) = R01t;
+    Rot3 R01t = relativePose.rotation();
+
     KeyVector keys = pose3Between->keys();
     Symbol key0 = keys.at(0);
     Symbol key1 = keys.at(1);
@@ -129,23 +138,33 @@ DistributedMapper::estimateRotation(){
       }
 
     // if using between noise, use the factor noise model converted to a conservative diagonal estimate
-    SharedDiagonal model = rotationNoiseModel_;
+    SharedDiagonal model = gtsam::noiseModel::Isotropic::Variance(3, 1);
     if(useBetweenNoise_){
-        model = multirobot_util::convertToDiagonalNoise(pose3Between->noiseModel());
+        model = multirobot_util::convertToDiagonalNoise(pose3Between->noiseModel(), 3);
       }
 
+    nonlinearRotSubgraph.add(BetweenFactor<Rot3>(key0, key1, R01t, model));
     if(robot0 == robotName_){ // robot i owns the first key
-      if(!useFlaggedInit_ || neighboringRobotsInitialized_[robot1]){ // if use flagged initialization and robot sharing the edge is already optimized
-        Vector r1 = neighborsLinearizedRotations_.at(key1);
-        rotSubgraph.add(key0, M9, r1, model);
-      }
+//      if(!useFlaggedInit_ || neighboringRobotsInitialized_[robot1]){ // if use flagged initialization and robot sharing the edge is already optimized
+        Vector r1 = neighborsLinearizedRotations_.at(key1); //get the initial rotation of separator poses
+        Rot3 rotKey1 = Rot3(r1(0), r1(1), r1(2),
+                            r1(3), r1(4), r1(5),
+                            r1(6), r1(7), r1(8) );
+        rotValues.insert(key1, rotKey1);
+        nonlinearRotSubgraph.add(gtsam::PriorFactor<Rot3>(key1, rotKey1,noiseModel::Diagonal::Variances(
+                (Vector(3) << 1e-2, 1e-2, M_PI*M_PI).finished() )) );
+//      }
     }
     else if(robot1 == robotName_){ // robot i owns the second key
-      if(!useFlaggedInit_ || neighboringRobotsInitialized_[robot0]){ // if use flagged initialization and robot sharing the edge is already optimized
+//      if(!useFlaggedInit_ || neighboringRobotsInitialized_[robot0]){ // if use flagged initialization and robot sharing the edge is already optimized
         Vector r0 = neighborsLinearizedRotations_.at(key0);
-        Vector M9_r0 = M9*r0;
-        rotSubgraph.add(key1, I_9x9, M9_r0, model);
-      }
+        Rot3 rotKey0 = Rot3(r0(0), r0(1), r0(2),
+                            r0(3), r0(4), r0(5),
+                            r0(6), r0(7), r0(8));
+        rotValues.insert(key0, rotKey0);
+        nonlinearRotSubgraph.add(gtsam::PriorFactor<Rot3>(key0, rotKey0,noiseModel::Diagonal::Variances(
+                (Vector(3) << 1e-2, 1e-2, M_PI*M_PI).finished() )) );
+//      }
     }
     else{
       cout << "robot0 != robotNames[i] and robot1 != robotNames[i]: " <<
@@ -155,7 +174,37 @@ DistributedMapper::estimateRotation(){
   }
 
   // Solve the LFG
-  newLinearizedRotation_ = rotSubgraph.optimize();
+
+  gtsam::ISAM2Params isam_params_;
+  gtsam::ISAM2 isam_;
+  isam_params_.relinearizeThreshold = 0.01;
+  isam_params_.relinearizeSkip = 1;
+  isam_params_.factorization = ISAM2Params::QR;
+  isam_params_.setOptimizationParams(gtsam::ISAM2DoglegParams());
+  isam_ = gtsam::ISAM2(isam_params_);
+
+//        nonlinearRotSubgraph.print();
+//        rotValues.print();
+
+  isam_.update(nonlinearRotSubgraph, rotValues);
+
+  Values result = isam_.calculateEstimate();
+//  result.print();
+  VectorValues newLinearizedRotation;
+  //convert vector to vectorvalues
+  for (auto rotThis : result){
+      Key keyThis = rotThis.key;
+      char robotThis = symbolChr(keyThis);
+      if (robotThis == robotName_ || keyThis == keyAnchor){
+          Matrix R9 = result.at<Rot3>(keyThis).matrix();
+          Vector v9 = multirobot_util::rowMajorVector(R9);
+          newLinearizedRotation.insert(keyThis, v9);
+      }
+  }
+
+  newLinearizedRotation_ = newLinearizedRotation;
+//  newLinearizedRotation.print();
+//  newLinearizedRotation_ = rotSubgraph.optimize();
 
   // Log it
   if(verbosity_ >= ERROR){
@@ -164,10 +213,87 @@ DistributedMapper::estimateRotation(){
       rotationEstimateChangeTrace_.push_back(latestChange_);
     }
 
-    double error = rotSubgraph.error(newLinearizedRotation_);
+    double error = nonlinearRotSubgraph.error(result);
     rotationErrorTrace_.push_back(error);
   }
 }
+
+    void
+    DistributedMapper::estimateRotation(){
+        // Rotation vector estimated using Chordal relaxation
+
+        // Inner edges for the current subgraph, rotation of separator poses would be added later
+        gtsam::GaussianFactorGraph rotSubgraph = rotSubgraph_.clone();
+
+        // push back to rotgraph_i (rotSubgraph) separator edges as priors
+        for(size_t s = 0 ; s < separatorEdgeIds_.size(); s++){ // for each separator
+            // | rj - Mij * ri | = | Mij * ri - rj |, with Mij = diag(Rij',Rij',Rij')
+            // |Ab - b| -> Jacobian(key,A,b)
+
+            size_t sepSlot =  separatorEdgeIds_[s];
+            boost::shared_ptr<BetweenFactor<Pose3> > pose3Between =
+                    boost::dynamic_pointer_cast<BetweenFactor<Pose3> >(graph_.at(sepSlot));
+
+            Pose3 relativePose = pose3Between->measured();
+            Matrix3 R01t = relativePose.rotation().transpose().matrix();
+            Matrix M9 = Z_9x9;
+            M9.block(0,0,3,3) = R01t;
+            M9.block(3,3,3,3) = R01t;
+            M9.block(6,6,3,3) = R01t;
+            KeyVector keys = pose3Between->keys();
+            Symbol key0 = keys.at(0);
+            Symbol key1 = keys.at(1);
+            char robot0 = symbolChr(key0);
+            char robot1 = symbolChr(key1);
+
+            // Landmarks use Upper case robot symbol
+            if(useLandmarks_){
+                robot0 = tolower(robot0);
+                robot1 = tolower(robot1);
+            }
+
+            // if using between noise, use the factor noise model converted to a conservative diagonal estimate
+            SharedDiagonal model = rotationNoiseModel_;
+            if(useBetweenNoise_){
+                model = multirobot_util::convertToDiagonalNoise(pose3Between->noiseModel());
+            }
+
+            if(robot0 == robotName_){ // robot i owns the first key
+                if(!useFlaggedInit_ || neighboringRobotsInitialized_[robot1]){ // if use flagged initialization and robot sharing the edge is already optimized
+                    Vector r1 = neighborsLinearizedRotations_.at(key1); //get the initial rotation of separator poses
+                    rotSubgraph.add(key0, M9, r1, model);
+                }
+            }
+            else if(robot1 == robotName_){ // robot i owns the second key
+                if(!useFlaggedInit_ || neighboringRobotsInitialized_[robot0]){ // if use flagged initialization and robot sharing the edge is already optimized
+                    Vector r0 = neighborsLinearizedRotations_.at(key0);
+                    Vector M9_r0 = M9*r0;
+                    rotSubgraph.add(key1, I_9x9, M9_r0, model);
+                }
+            }
+            else{
+                cout << "robot0 != robotNames[i] and robot1 != robotNames[i]: " <<
+                     robot0 << " " << robot1 << " " << endl;
+                exit(1);
+            }
+        }
+
+        // Solve the LFG
+        newLinearizedRotation_ = rotSubgraph.optimize();
+        newLinearizedRotation_.print();
+
+
+        // Log it
+        if(verbosity_ >= ERROR){
+            if(linearizedRotation_.size() == newLinearizedRotation_.size()){
+                latestChange_ = newLinearizedRotation_.subtract(linearizedRotation_).norm();
+                rotationEstimateChangeTrace_.push_back(latestChange_);
+            }
+
+            double error = rotSubgraph.error(newLinearizedRotation_);
+            rotationErrorTrace_.push_back(error);
+        }
+    }
 
 //*****************************************************************************
 void
@@ -290,6 +416,8 @@ DistributedMapper::estimatePoses(){
 void DistributedMapper::optimize(){
   // Estimate Rotation
   estimateRotation();
+
+  estimateRotationNonlinear();
 
   // Update Estimate
   updateRotation();

@@ -19,6 +19,12 @@
 #include <gtsam/inference/Symbol.h>
 #include <gtsam/inference/graph.h>
 
+//include for DCSAM
+#include "dcsam/DCContinuousFactor.h"
+#include "dcsam/DCMixtureFactor.h"
+#include "dcsam/DCSAM.h"
+#include "dcsam/DiscretePriorFactor.h"
+
 namespace distributed_mapper{
 
 
@@ -45,8 +51,8 @@ class DistributedMapper{
       graph_ = gtsam::NonlinearFactorGraph();
       chordalGraph_ = gtsam::NonlinearFactorGraph();
       rotSubgraph_ = gtsam::GaussianFactorGraph();
-      initial_ = gtsam::Values();
-      neighbors_ = gtsam::Values();
+      initial_ = gtsam::Values(); // the value for local poses
+      neighbors_ = gtsam::Values();// the value for separator poses
       rotationErrorTrace_ = std::vector<double>();
       poseErrorTrace_ = std::vector<double>();
       rotationEstimateChangeTrace_ = std::vector<double>();
@@ -274,9 +280,11 @@ class DistributedMapper{
 
     /** @brief convertLinearizedRotationToPoses iterates over linearized rotations and convert them to poses with zero translation  */
     void convertLinearizedRotationToPoses(){
+        //convert from 1*9 to 3*3
       gtsam::Values rotValue = gtsam::InitializePose3::normalizeRelaxedRotations(linearizedRotation_);
+      //initialize initial_ with rotation matrix and [0,0,0]for x,y,z
       initial_ = multirobot_util::pose3WithZeroTranslation(rotValue);
-      linearizedPoses_ = multirobot_util::initializeVectorValues(initial_); // Init linearized poses
+      linearizedPoses_ = multirobot_util::initializeVectorValues(initial_); // Init linearized poses [R t to 1*6]
       distGFG_ = *(chordalGraph_.linearize(initial_));
 
       // Initial error
@@ -448,6 +456,8 @@ class DistributedMapper{
     UpdateType updateType_;
     double gamma_;
 
+    void estimateRotationNonlinear();
+
 
   protected:
     bool debug_; // Debug flag
@@ -458,7 +468,10 @@ class DistributedMapper{
     gtsam::NonlinearFactorGraph graph_; // subgraph corresponding to each robot
     gtsam::Values initial_; // subinitials corresponding to each robot
     gtsam::NonlinearFactorGraph innerEdges_; // edges involving keys from a single robot (exclude separator edges)
-    std::vector<size_t>  separatorEdgeIds_; // for each robot stores the position of the factors corresponding to separator edges
+//    gtsam::NonlinearFactorGraph innerEdges_; // edges involving keys from a single robot (exclude separator edges)
+    // stores the position of the factors corresponding to separator edges, initialized in createSubgraphInnerAndSepEdges()
+    std::vector<size_t>  separatorEdgeIds_; // for each robot (id of measurement in graph_)
+    //all keys from robot neighbors
     gtsam::Values neighbors_; // contains keys of all the neighboring robots
     std::set<char> neighborChars_; // contains neighboring robot symbols
     double latestChange_; // Latest change in estimate, stopping condition
@@ -467,13 +480,19 @@ class DistributedMapper{
     // Cached values and graph required for fast optimization and communication
     gtsam::VectorValues linearizedRotation_; // contains vector values of rotation of internal nodes
     gtsam::VectorValues newLinearizedRotation_; // contains vector values of rotation of internal nodes after current iteration
+    //linearized neighbor poses
     gtsam::VectorValues neighborsLinearizedRotations_; // contains vector values of all the neighboring robots for distributed estimation
     gtsam::VectorValues linearizedPoses_; // contains vector values of poses of internal nodes
     gtsam::VectorValues newLinearizedPoses_; // contains vector values of poses of internal nodes after current iteration
+    //initialized with all zeros
     gtsam::VectorValues neighborsLinearizedPoses_; // contains vector values of all the neighboring robots for distributed estimation
     gtsam::NonlinearFactorGraph chordalGraph_; // edges involving keys from a single robot represented using BetweenChordalFactors
+    //graph with rotation of inneredges
     gtsam::GaussianFactorGraph rotSubgraph_; // linear orientation graph required for distributed rotation estimation
-    gtsam::GaussianFactorGraph distGFG_; // Gaussian factor graph initialized before distributed pose estimation
+    gtsam::NonlinearFactorGraph nonlinearRotSubgraph_;
+    gtsam::Values rotValues_;
+
+    gtsam::GaussianFactorGraph distGFG_; // Gaussian factor graph initialized before distributed pose estimation linearlized chordalGraph_
 
     // Initialization
     std::map<char, bool> neighboringRobotsInitialized_; // contains boolean flag to check if a robot is initialized or not

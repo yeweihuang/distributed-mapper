@@ -1,6 +1,7 @@
 #include <MultiRobotUtils.h>
 #include <gtsam/inference/Symbol.h>
 
+
 using namespace std;
 using namespace gtsam;
 
@@ -41,7 +42,8 @@ namespace distributed_mapper{
     Values poses;
     for(const Values::ConstKeyValuePair& key_value: rotations){
         Key key = key_value.key;
-        Pose3 pose(rotations.at<Rot3>(key), Matrix::Zero(3, 3));
+//        Pose3 pose(rotations.at<Rot3>(key), Matrix::Zero(3, 3));
+        Pose3 pose(rotations.at<Rot3>(key), Vector::Zero(3));
         poses.insert(key, pose);
       }
     return poses;
@@ -52,7 +54,8 @@ namespace distributed_mapper{
     VectorValues vectorValues;
     for(const Values::ConstKeyValuePair& key_value: rotations){
         Key key = key_value.key;
-        vectorValues.insert(key, Matrix::Zero(6, 6));
+//        vectorValues.insert(key, Matrix::Zero(6, 6));
+        vectorValues.insert(key, Vector::Zero(6));
       }
     return vectorValues;
   }
@@ -77,7 +80,7 @@ namespace distributed_mapper{
     for(const Values::ConstKeyValuePair& key_value: subInitials) {
         Pose3 pose = subInitials.at<Pose3>(key_value.key);
         Matrix3 R = pose.rotation().matrix();
-        Vector r = rowMajorVector(R);
+        Vector r = rowMajorVector(R);//r: 1 by 9
         subInitialsVectorValue.insert(key_value.key, r);
       }
     return subInitialsVectorValue;
@@ -157,8 +160,71 @@ namespace distributed_mapper{
     return cenFG;
   }
 
+    /* ************************************************************************* */
+    //get the rotation from g, & construct a gaussian factor graph with rotation from g
+    std::pair <gtsam::NonlinearFactorGraph, gtsam::Values >
+        multirobot_util::buildNonLinearOrientationGraph(
+            const gtsam::NonlinearFactorGraph& g, const gtsam::Values& v, bool useBetweenNoise){
+
+        NonlinearFactorGraph fGraph;
+        Values iValue;
+        SharedDiagonal model = noiseModel::Unit::Create(3);
+
+        for(const boost::shared_ptr<NonlinearFactor>& factor: g) {
+            Rot3 Rij;
+
+            boost::shared_ptr<BetweenFactor<Pose3> > pose3Between =
+                    boost::dynamic_pointer_cast<BetweenFactor<Pose3> >(factor);
+            if (pose3Between)
+                Rij = pose3Between->measured().rotation();
+            else
+                std::cout << "Error in buildNonLinearOrientationGraph" << std::endl;
+
+            // if using between noise, use the factor noise model converted to a conservative diagonal estimate
+            if(useBetweenNoise){
+                model = convertToDiagonalNoise(pose3Between->noiseModel(), 3);
+            }
+
+            const FastVector<Key>& keys = factor->keys();
+            Key key1 = keys[0], key2 = keys[1];
+
+//            if (key1 == keyAnchor)
+//                fGraph.add(gtsam::PriorFactor<Rot3>(key2, Rot3::RzRyRx(0,0,0),noiseModel::Diagonal::Variances(
+//                (Vector(3) << 1e-2, 1e-2, M_PI*M_PI).finished() )) );
+//            else if(key2 == keyAnchor)
+//                fGraph.add(gtsam::PriorFactor<Rot3>(key1, Rot3::RzRyRx(0,0,0),noiseModel::Diagonal::Variances(
+//                        (Vector(3) << 1e-2, 1e-2, M_PI*M_PI).finished() )) );
+//            else
+            fGraph.add(gtsam::BetweenFactor<Rot3>(key1, key2, Rij, model));
+
+            //try initialize everything zero
+            if (iValue.find(key1) == iValue.end() && key1 != keyAnchor){
+                if (v.find(key1) != v.end())
+                    iValue.insert(key1, v.at<Pose3>(key1).rotation());
+                else
+                    iValue.insert(key1, Rot3::RzRyRx(0,0,0));
+            }
+
+            if (iValue.find(key2) == iValue.end() && key2 != keyAnchor){
+                if (v.find(key2) != v.end())
+                    iValue.insert(key2, v.at<Pose3>(key2).rotation());
+                else
+                    iValue.insert(key2, Rot3::RzRyRx(0,0,0));
+            }
+
+        }
+        // prior on the anchor orientation
+        SharedDiagonal priorModel = noiseModel::Unit::Create(3);
+
+        fGraph.add(gtsam::PriorFactor<Rot3>(keyAnchor, Rot3::RzRyRx(0,0,0),noiseModel::Diagonal::Variances(
+                (Vector(3) << 1e-2, 1e-2, M_PI*M_PI).finished() )) );
+        if (iValue.find(keyAnchor) == iValue.end())
+            iValue.insert(keyAnchor, Rot3::RzRyRx(0,0,0));
+        return std::make_pair(fGraph,iValue);
+    }
 
   /* ************************************************************************* */
+  //get the rotation from g, & construct a gaussian factor graph with rotation from g
   GaussianFactorGraph
   multirobot_util::buildLinearOrientationGraph(const NonlinearFactorGraph& g, bool useBetweenNoise) {
 
@@ -348,7 +414,7 @@ namespace distributed_mapper{
 
 
   //*****************************************************************************
-  SharedDiagonal multirobot_util::convertToDiagonalNoise(SharedNoiseModel noise){
+  SharedDiagonal multirobot_util::convertToDiagonalNoise(SharedNoiseModel noise, int num){
 
     // Extract square root information matrix
     SharedGaussian gaussianNoise = boost::dynamic_pointer_cast<noiseModel::Gaussian>(noise);
@@ -362,7 +428,11 @@ namespace distributed_mapper{
           maxC = C(i,i);
       }
 
-    SharedDiagonal chordalNoise = noiseModel::Diagonal::Sigmas(gtsam::Vector9::Constant(maxC));
+    SharedDiagonal chordalNoise;
+    if (num == 9)
+        chordalNoise = noiseModel::Diagonal::Sigmas(gtsam::Vector9::Constant(maxC));
+    else if (num == 3)
+        chordalNoise = noiseModel::Diagonal::Sigmas(gtsam::Vector3::Constant(maxC));
     return chordalNoise;
   }
 

@@ -114,8 +114,12 @@ namespace distributed_mapper{
    */
     gtsam::GaussianFactorGraph buildLinearOrientationGraph(const gtsam::NonlinearFactorGraph& g, bool useBetweenNoise = false);
 
+      /**
+ * @brief buildLinearOrientationGraph generates a linear orientation graph given the nonlinear factor graph and uses the between noise
+ */
+    std::pair <gtsam::NonlinearFactorGraph, gtsam::Values > buildNonLinearOrientationGraph(const gtsam::NonlinearFactorGraph& g, const gtsam::Values& v, bool useBetweenNoise = false);
 
-    /**
+      /**
    * @brief loadSubgraphs loads the subgraphs in the dataPath directory
    * @param numSubgraphs is the num of subgraphs in the directory
    * @param dataPath is the data path of the directory
@@ -157,7 +161,7 @@ namespace distributed_mapper{
    * @param noise
    * @return
    */
-    gtsam::SharedDiagonal convertToDiagonalNoise(gtsam::SharedNoiseModel noise);
+    gtsam::SharedDiagonal convertToDiagonalNoise(gtsam::SharedNoiseModel noise, int num = 9);
 
     /** @brief writeValuesAsTUM writes the optimized values in TUM format */
     void

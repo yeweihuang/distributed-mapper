@@ -12,3 +12,6 @@ data/example_16robots/fullGraph.g2o
 data/example_25robots/fullGraph.g2o
 data/example_36robots/fullGraph.g2o
 data/example_49robots/fullGraph.g2o
+distributed_mapper_core/cpp/build/
+distributed_mapper_core/cpp/cmake-build-debug/
+distributed_mapper_core/cpp/.idea/

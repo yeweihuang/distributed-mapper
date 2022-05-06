@@ -20,6 +20,7 @@
 #include <gtsam/base/Testable.h>
 #include <gtsam/base/Lie.h>
 #include <gtsam/nonlinear/NonlinearFactor.h>
+#include "dcsam/SemanticBearingRangeFactor.h"
 
 namespace gtsam {
 

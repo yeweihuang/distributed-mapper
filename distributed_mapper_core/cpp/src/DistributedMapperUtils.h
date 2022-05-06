@@ -189,7 +189,7 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
   if(debug)
     std::cout << "[optimizeRotation] Starting rotation iteration"  << std::endl;
 
-
+  //TODO: This is where our main modification happens
   // Iterations
   for(size_t iter=0; iter < maxIter; iter++){
       gtsam::Values distributed_iter; // For logging
@@ -202,18 +202,19 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
         gtsam::Values subgraph_iter; // For logging
 
         // Ask other robots for updated estimates and update it
+        //for all the separator poses of neighbor robots
         for(const gtsam::Values::ConstKeyValuePair& key_value: distMappers[robot]->neighbors()){
           gtsam::Key key = key_value.key;
 
           // distMappers only contains the robots that are currently communicating, so we check
           // if the neighbor keys is from one of these robots, if so, we update it (cummunication)
-          char symbol = gtsam::symbolChr(key);
+           char symbol = gtsam::symbolChr(key);//index of neighbor robots
           if(useLandmarks)symbol=tolower(symbol); // for communication links between two landmarks
           size_t neighboringRobotId = robotNames.find(symbol);
-          if (neighboringRobotId != std::string::npos){ // if the robot is actually communicating
+          if (neighboringRobotId != std::string::npos){ // if the robot is actually communicating ( aka: if the number is found)
               gtsam::Vector rotationEstimate = distMappers[neighboringRobotId]->linearizedRotationAt(key);
               distMappers[robot]->updateNeighborLinearizedRotations(key, rotationEstimate); // this requires communication
-
+                //get initial value of separator poses from other robot
               bool neighboringRobotInitialized = distMappers[neighboringRobotId]->isRobotInitialized();
               distMappers[robot]->updateNeighboringRobotInitialized(symbol, neighboringRobotInitialized); // this requires communication
             }
@@ -227,6 +228,7 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
           std::cout << "[optimizeRotation] Queried neighbors" << std::endl;
 
         if(rotationTrace){
+            //load the latest rotation values in pose3 & 1*9
             std::pair<gtsam::Values, gtsam::VectorValues> log = logRotationTrace(distMappers[robot]);
             for(const auto& value : log.first)
             {
@@ -241,7 +243,8 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
           std::cout << "[optimizeRotation] Estimating rotation"  << std::endl;
 
         // Iterate
-        distMappers[robot]->estimateRotation(); // optimization
+//        distMappers[robot]->estimateRotation(); // TODO:optimization this should be where we want to modify
+        distMappers[robot]->estimateRotationNonlinear();
 
         if(debug)
           std::cout << "[optimizeRotation] Estimate rotation complete"  << std::endl;
@@ -265,7 +268,7 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
 
         // Trace
         if(subgraphRotationTrace)
-          subgraphRotationTrace->push_back(subgraph_iter);
+          subgraphRotationTrace->push_back(subgraph_iter);//record the rotation before optimize
 
       }
 
@@ -433,7 +436,7 @@ void optimizePose(std::vector< boost::shared_ptr<DistributedMapper> > distMapper
           std::cout << "[optimizePoses] Estimating poses"  << std::endl;
 
         // Iterate
-        distMappers[robot]->estimatePoses();
+        distMappers[robot]->estimatePoses();//TODO: this is where we optimize the total poses
 
         if(debug)
           std::cout << "[optimizePoses] Estimate poses complete"  << std::endl;
@@ -559,6 +562,7 @@ distributedOptimizer(std::vector< boost::shared_ptr<DistributedMapper> > distMap
   ////////////////////////////////////////////////////////////////////////////////////////////
   // Flagged Init
   ////////////////////////////////////////////////////////////////////////////////////////////
+  //TODO: investigate how orderRobots work
   std::vector<size_t> ordering = orderRobots(distMappers,
                                              nrRobots,
                                              robotNames,
