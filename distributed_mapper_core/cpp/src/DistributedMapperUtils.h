@@ -168,6 +168,7 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
                       bool debug,
                       double rotationEstimateChangeThreshold,
                       bool useLandmarks = false,
+                      bool useMultiHypo = true,
                       boost::optional<std::vector<gtsam::Values>&> rotationTrace = boost::none,
                       boost::optional<std::vector<gtsam::Values>&> subgraphRotationTrace = boost::none,
                       boost::optional<std::vector<gtsam::VectorValues>&> rotationVectorValuesTrace = boost::none,
@@ -189,7 +190,7 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
   if(debug)
     std::cout << "[optimizeRotation] Starting rotation iteration"  << std::endl;
 
-  //TODO: This is where our main modification happens
+
   // Iterations
   for(size_t iter=0; iter < maxIter; iter++){
       gtsam::Values distributed_iter; // For logging
@@ -243,8 +244,11 @@ void optimizeRotation(std::vector< boost::shared_ptr<DistributedMapper> > distMa
           std::cout << "[optimizeRotation] Estimating rotation"  << std::endl;
 
         // Iterate
-//        distMappers[robot]->estimateRotation(); // TODO:optimization this should be where we want to modify
-        distMappers[robot]->estimateRotationNonlinear();
+        if (useMultiHypo)
+          distMappers[robot]->estimateRotationNonlinear();
+        else
+          distMappers[robot]->estimateRotation();
+
 
         if(debug)
           std::cout << "[optimizeRotation] Estimate rotation complete"  << std::endl;
@@ -362,6 +366,7 @@ void optimizePose(std::vector< boost::shared_ptr<DistributedMapper> > distMapper
                   bool debug,
                   double poseEstimateChangeThreshold,
                   bool useLandmarks = false,
+                  bool useMultiHypo = true,
                   boost::optional<std::vector<gtsam::Values>&> poseTrace = boost::none,
                   boost::optional<std::vector<gtsam::Values>&> subgraphPoseTrace = boost::none,
                   boost::optional<gtsam::Values&> poseCentralized = boost::none,
@@ -436,7 +441,10 @@ void optimizePose(std::vector< boost::shared_ptr<DistributedMapper> > distMapper
           std::cout << "[optimizePoses] Estimating poses"  << std::endl;
 
         // Iterate
-        distMappers[robot]->estimatePoses();//TODO: this is where we optimize the total poses
+        if (useMultiHypo)
+          distMappers[robot]->estimatePosesMixture();
+        else
+          distMappers[robot]->estimatePoses();//TODO: this is where we optimize the total poses
 
         if(debug)
           std::cout << "[optimizePoses] Estimate poses complete"  << std::endl;
@@ -537,6 +545,7 @@ distributedOptimizer(std::vector< boost::shared_ptr<DistributedMapper> > distMap
                      bool useFlaggedInit = false,
                      bool useLandmarks = false,
                      bool debug = false,
+                     bool useMultiHypo = true,
                      boost::optional<std::vector<gtsam::Values>&> rotationTrace = boost::none,
                      boost::optional<std::vector<gtsam::Values>&> poseTrace  = boost::none,
                      boost::optional<std::vector<gtsam::Values>&> subgraphRotationTrace = boost::none,
@@ -593,6 +602,7 @@ distributedOptimizer(std::vector< boost::shared_ptr<DistributedMapper> > distMap
                    debug,
                    rotationEstimateChangeThreshold,
                    useLandmarks,
+                   useMultiHypo,
                    rotationTrace,
                    subgraphRotationTrace,
                    rotationVectorValuesTrace,
@@ -654,6 +664,7 @@ distributedOptimizer(std::vector< boost::shared_ptr<DistributedMapper> > distMap
                debug,
                poseEstimateChangeThreshold,
                useLandmarks,
+               useMultiHypo,
                poseTrace,
                subgraphPoseTrace,
                poseCentralized,

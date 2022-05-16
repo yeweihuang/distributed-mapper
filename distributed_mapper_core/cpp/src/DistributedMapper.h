@@ -141,6 +141,10 @@ class DistributedMapper{
       }
     }
 
+    void estimateRotationNonlinear();
+
+    void estimatePosesMixture();
+
     /** @brief chordalFactorGraph generates a graph of BetweenChordalFactors using innerEdges required for distributed pose estimation*/
     void chordalFactorGraph();
 
@@ -455,8 +459,6 @@ class DistributedMapper{
     // UpdateType and Gamma
     UpdateType updateType_;
     double gamma_;
-
-    void estimateRotationNonlinear();
 
 
   protected:
